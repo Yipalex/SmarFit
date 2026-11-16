@@ -1,0 +1,35 @@
+name: Build downloadable artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm install --global pnpm@10.32.1
+      - run: pnpm install --frozen-lockfile
+      - run: cargo test --locked --workspace
+      - run: cargo install worker-build --version 0.9.0 --locked
+      - run: pnpm check:web && pnpm build:web && pnpm build:worker
+      - run: tar -czf smarfit-worker.tar.gz LICENSE NOTICE migrations web/dist worker/build/index.js worker/build/index_bg.wasm worker/build/package.json worker/build/worker/shim.mjs
+      - uses: actions/attest@v4
+        with:
+          subject-path: smarfit-worker.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: smarfit-worker
+          path: smarfit-worker.tar.gz
+          if-no-files-found: error

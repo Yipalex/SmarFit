@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
-const base = process.argv[2];
+const [base, main] = process.argv.slice(2);
 const key = randomBytes(32).toString("hex");
 
 async function workspace(body, token = key, status = 200) {
@@ -83,6 +83,17 @@ assert.equal(
   0,
 );
 await workspace(undefined, "", 401);
+if (main) {
+  const response = await fetch(new URL("/api/workspace", main), {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  assert.equal(response.status, 200);
+  const mainWorkspace = await response.json();
+  assert.equal(mainWorkspace.revision, 0);
+  assert.deepEqual(mainWorkspace.workspace.projects, []);
+  console.log("Verified preview writes are absent from main D1.");
+}
+
 console.log(
   "Verified D1 persistence, immutable published quote, stale revision rejection and workspace isolation.",
 );

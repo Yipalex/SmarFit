@@ -67,11 +67,13 @@ jobs:
           node scripts/configure.mjs --preview
           pnpm exec wrangler d1 migrations apply DB --remote --cwd worker --config wrangler.generated.json
           preview="branch-$(printf '%s' "$GITHUB_REF_NAME" | sha256sum | cut -c1-12)"
-          pnpm exec wrangler preview --name "$preview" --cwd worker --config wrangler.generated.json | tee /tmp/smarfit-preview.log
-          {
-            echo '### Cloudflare Preview'
-            cat /tmp/smarfit-preview.log
-          } >> "$GITHUB_STEP_SUMMARY"
+          export WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/smarfit-preview.jsonl"
+          pnpm exec wrangler preview --name "$preview" --ignore-base-config --cwd worker --config wrangler.generated.json
+          preview_url=$(jq -rs 'map(select(.type == "preview")) | last | (.deployment_urls[0] // .preview_urls[0] // empty)' "$WRANGLER_OUTPUT_FILE_PATH")
+          test -n "$preview_url"
+          node scripts/verify-deploy.mjs "$preview_url"
+          node scripts/smoke.mjs "$preview_url" "$SMARFIT_URL"
+          printf '### Cloudflare Preview\n\n[%s](%s)\n' "$GITHUB_REF_NAME" "$preview_url" >> "$GITHUB_STEP_SUMMARY"
       - name: Deploy main
         if: github.ref == 'refs/heads/main'
         run: |

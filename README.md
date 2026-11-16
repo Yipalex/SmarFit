@@ -6,7 +6,7 @@
 
 ## 本地运行
 
-需要 Node.js 24、pnpm 10.32.1、Rust 稳定版和 rustup。
+需要 Node.js 24、pnpm 10.32.1 和 rustup。Rust 版本由 `rust-toolchain.toml` 固定。
 
 ```sh
 cargo install worker-build --version 0.9.0 --locked
@@ -37,6 +37,6 @@ node scripts/smoke.mjs http://localhost:8787
 
 SmarFit 源码公开，采用 [PolyForm Noncommercial 1.0.0](LICENSE)。超出公开许可范围的商用须事先联系 [Alex Yip](https://github.com/Yipalex) 获取授权。
 
-源码署名包含 `ximo`，页脚和 `/api/version` 显示构建版本与 Git 提交。首个可下载产物发布时附构建来源证明。
+源码署名包含 `ximo`，页脚和 `/api/version` 显示构建版本与 Git 提交。维护者可手动运行 GitHub Actions 的 **Build downloadable artifact**，生成带构建来源证明的 Worker 压缩包。下载并解开 Actions 外层 ZIP 后，用 `gh attestation verify smarfit-worker.tar.gz -R Yipalex/SmarFit` 验证。
 
 欢迎在 Issues 反馈使用场景。外部代码贡献在另行商业授权所需的贡献条款就绪后开始合并。参见[路线图](ROADMAP.md)。
