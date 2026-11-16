@@ -532,3 +532,93 @@ footer {
 .summary strong {
   font-variant-numeric: tabular-nums;
 }
+
+.questionnaire {
+  max-width: 660px;
+  margin: 0 auto;
+}
+.survey-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 22px;
+  font-weight: 700;
+}
+.survey-brand .brand-mark {
+  font-size: 24px;
+}
+.survey-panel {
+  padding: clamp(20px, 5vw, 38px);
+}
+.survey-panel h1 {
+  margin-bottom: 20px;
+}
+.survey-form,
+.survey-form > label,
+.survey-link {
+  display: grid;
+  gap: 10px;
+}
+.survey-form {
+  gap: 18px;
+}
+.survey-form .demo-note,
+.survey-form .alert {
+  margin: 0;
+}
+.survey-form fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0;
+  padding: 12px;
+}
+.survey-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+  gap: 8px;
+}
+.survey-options label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+}
+.survey-options input {
+  accent-color: var(--espresso);
+}
+.inbox-grid {
+  display: grid;
+  gap: 16px;
+  max-width: 850px;
+}
+.inbox-content,
+.inbox-entry {
+  padding: 17px 19px;
+}
+.inbox-entry + .inbox-entry {
+  border-top: 1px solid var(--line);
+}
+.inbox-entry h3 {
+  margin: 0 0 8px;
+}
+.inbox-entry p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.inbox-refresh {
+  margin-left: auto;
+}
+.inbox-actions {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 12px;
+}
+.survey-preview {
+  color: var(--espresso);
+  text-decoration: underline;
+  padding: 9px 4px;
+}

@@ -19,7 +19,20 @@ type Project = {
   published: Quote[];
 };
 type Workspace = { projects: Project[]; catalog: Line[] };
-type State = { workspace: Workspace; revision: number };
+type Inquiry = {
+  id: string;
+  name: string;
+  home: string;
+  systems: string[];
+  budget: string;
+  notes: string;
+};
+type State = {
+  workspace: Workspace;
+  revision: number;
+  questionnaire_key: string | null;
+  inbox: Inquiry[];
+};
 type EditableLine = {
   key: number;
   name: string;
@@ -30,7 +43,20 @@ type EditableLine = {
 
 const workspace = ref<Workspace>({ projects: [], catalog: [] });
 const revision = ref(0);
-const tab = ref<"projects" | "catalog">("projects");
+const tab = ref<"projects" | "catalog" | "inbox">("projects");
+const tabLabels = {
+  projects: "项目与报价",
+  catalog: "产品库",
+  inbox: "需求收件箱",
+};
+const questionnaireKey = ref<string | null>(null);
+const inbox = ref<Inquiry[]>([]);
+const copied = ref(false);
+const questionnaireURL = computed(() =>
+  questionnaireKey.value
+    ? new URL(`/q/${questionnaireKey.value}`, location.origin).href
+    : "",
+);
 const selected = ref(0);
 const historyVersion = ref<number | null>(null);
 const lines = ref<EditableLine[]>([]);
@@ -104,6 +130,8 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 function apply(state: State) {
   revision.value = state.revision;
   workspace.value = state.workspace;
+  questionnaireKey.value = state.questionnaire_key;
+  inbox.value = state.inbox ?? [];
 }
 
 function editable(line: Line): EditableLine {
@@ -155,14 +183,68 @@ watch(
   { deep: true },
 );
 
+function randomKey() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function refreshInbox() {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    apply(await api<State>("/api/workspace"));
+  } catch (cause) {
+    error.value = (cause as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+function openInbox() {
+  tab.value = "inbox";
+  message.value = "";
+  if (ready.value) void refreshInbox();
+}
+
+async function copyQuestionnaire() {
+  try {
+    await navigator.clipboard.writeText(questionnaireURL.value);
+    copied.value = true;
+  } catch {
+    error.value = "复制失败，请选中链接后手动复制。";
+  }
+}
+
+function setQuestionnaire(open: boolean) {
+  void mutate(
+    { action: "set_questionnaire", key: open ? randomKey() : null },
+    () => {
+      copied.value = false;
+      message.value = open ? "问卷链接已启用" : "问卷链接已关闭";
+    },
+  );
+}
+
+function resolveInquiry(id: string, createProject: boolean) {
+  void mutate(
+    { action: "resolve_inquiry", id, create_project: createProject },
+    () => {
+      if (createProject) showProject(workspace.value.projects.length - 1);
+      message.value = createProject
+        ? "需求已转为项目，可以开始报价"
+        : "需求已移除";
+    },
+  );
+}
+
 async function load() {
   error.value = "";
   try {
     token = localStorage.getItem("smarfit-demo-key") ?? "";
     if (!/^[0-9a-f]{64}$/.test(token)) {
-      token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("");
+      token = randomKey();
       localStorage.setItem("smarfit-demo-key", token);
     }
     apply(await api<State>("/api/workspace"));
@@ -323,6 +405,9 @@ async function printCustomer() {
         <button :class="{ active: tab === 'catalog' }" @click="tab = 'catalog'">
           <span class="nav-icon" aria-hidden="true">◫</span> 产品库
         </button>
+        <button :class="{ active: tab === 'inbox' }" @click="openInbox">
+          <span class="nav-icon" aria-hidden="true">▱</span> 需求收件箱
+        </button>
       </nav>
       <div class="sidebar-bottom">
         <span class="status-dot"></span> 试验工作台
@@ -331,9 +416,7 @@ async function printCustomer() {
 
     <div class="main-shell">
       <header class="topbar">
-        <span
-          >工作台 <span class="slash">/</span>
-          {{ tab === "projects" ? "项目与报价" : "产品库" }}</span
+        <span>工作台 <span class="slash">/</span> {{ tabLabels[tab] }}</span
         ><a
           href="https://github.com/Yipalex/SmarFit"
           target="_blank"
@@ -344,17 +427,19 @@ async function printCustomer() {
       <main>
         <div class="page-head">
           <div>
-            <h1>{{ tab === "projects" ? "项目与报价" : "产品库" }}</h1>
+            <h1>{{ tabLabels[tab] }}</h1>
             <p>
               {{
                 tab === "projects"
                   ? "记录需求、编制报价，保存每次对外发布的版本。"
-                  : "维护常用设备与服务，编制报价时直接选用。"
+                  : tab === "catalog"
+                    ? "维护常用设备与服务，编制报价时直接选用。"
+                    : "分享需求问卷，将收到的需求转为报价项目。"
               }}
             </p>
           </div>
           <button
-            v-if="ready"
+            v-if="ready && tab !== 'inbox'"
             class="primary"
             :disabled="busy"
             @click="tab === 'projects' ? openProject() : openProduct(null)"
@@ -366,7 +451,13 @@ async function printCustomer() {
           试验环境 · 工作台随当前浏览器保存，请使用虚构项目和产品资料。
         </p>
         <div v-if="error" class="alert" role="alert">
-          {{ error }} <button type="button" @click="load">重新加载</button>
+          {{ error }}
+          <button
+            type="button"
+            @click="tab === 'inbox' ? refreshInbox() : load()"
+          >
+            重新加载
+          </button>
         </div>
         <p v-if="message" class="success" role="status">{{ message }}</p>
         <p v-if="!ready && !error" role="status">正在加载工作台…</p>
@@ -573,6 +664,86 @@ async function printCustomer() {
             <h2>开始第一份报价</h2>
             <p>先创建一个项目，填入客户需求，再添加设备和服务。</p>
             <button class="primary" @click="openProject">＋ 新建项目</button>
+          </section>
+        </div>
+
+        <div v-if="ready && tab === 'inbox'" class="inbox-grid">
+          <section class="panel">
+            <div class="panel-heading"><h2>客户问卷链接</h2></div>
+            <div class="inbox-content">
+              <template v-if="questionnaireURL">
+                <label class="survey-link"
+                  >公开填写链接<input
+                    :value="questionnaireURL"
+                    readonly
+                    @focus="($event.target as HTMLInputElement).select()"
+                /></label>
+                <div class="inbox-actions">
+                  <button class="primary" @click="copyQuestionnaire">
+                    {{ copied ? "已复制" : "复制链接" }}
+                  </button>
+                  <a
+                    class="survey-preview"
+                    :href="questionnaireURL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >打开问卷 ↗</a
+                  >
+                  <button :disabled="busy" @click="setQuestionnaire(false)">
+                    关闭链接
+                  </button>
+                </div>
+              </template>
+              <button
+                v-else
+                class="primary"
+                :disabled="busy"
+                @click="setQuestionnaire(true)"
+              >
+                创建问卷链接
+              </button>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>待处理需求</h2>
+              <span class="count">{{ inbox.length }}</span
+              ><button
+                class="inbox-refresh"
+                :disabled="busy"
+                @click="refreshInbox"
+              >
+                刷新
+              </button>
+            </div>
+            <p v-if="!inbox.length" class="empty-list">还没有收到需求。</p>
+            <article
+              v-for="entry in [...inbox].reverse()"
+              :key="entry.id"
+              class="inbox-entry"
+            >
+              <h3>{{ entry.name }}</h3>
+              <p>
+                {{ entry.home }} · {{ entry.systems.join("、") }} ·
+                {{ entry.budget }}
+              </p>
+              <p v-if="entry.notes">{{ entry.notes }}</p>
+              <div class="inbox-actions">
+                <button
+                  class="primary"
+                  :disabled="busy"
+                  @click="resolveInquiry(entry.id, true)"
+                >
+                  转为项目
+                </button>
+                <button
+                  :disabled="busy"
+                  @click="resolveInquiry(entry.id, false)"
+                >
+                  移除需求
+                </button>
+              </div>
+            </article>
           </section>
         </div>
 

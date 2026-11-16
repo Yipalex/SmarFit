@@ -3,7 +3,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use smarfit_core::{DraftLine, Quote, price};
+use worker::wasm_bindgen::JsValue;
 use worker::*;
+
+mod questionnaire;
+use questionnaire::{Inquiry, valid_key};
 
 #[derive(Default, Serialize, Deserialize)]
 struct Workspace {
@@ -33,6 +37,13 @@ enum Action {
         name: String,
         requirements: String,
     },
+    SetQuestionnaire {
+        key: Option<String>,
+    },
+    ResolveInquiry {
+        id: String,
+        create_project: bool,
+    },
     SaveProduct {
         index: Option<usize>,
         item: DraftLine,
@@ -48,6 +59,8 @@ enum Action {
 struct Stored {
     revision: u32,
     document: String,
+    questionnaire_key: Option<String>,
+    inbox: String,
 }
 
 impl Workspace {
@@ -71,6 +84,7 @@ impl Workspace {
                     published: vec![],
                 });
             }
+            Action::SetQuestionnaire { .. } | Action::ResolveInquiry { .. } => unreachable!(),
             Action::SaveProduct { index, mut item } => {
                 item.quantity = 1;
                 let mut checked = price(vec![item])?;
@@ -106,7 +120,8 @@ impl Workspace {
 
 #[event(fetch)]
 async fn main(mut req: Request, env: Env, _: Context) -> Result<Response> {
-    let result = match (req.method(), req.path().as_str()) {
+    let path = req.path();
+    let result = match (req.method(), path.as_str()) {
         (Method::Get, "/api/health") => Response::from_json(&json!({ "status": "ok" })),
         (Method::Get, "/api/version") => Response::from_json(&json!({
             "name": "SmarFit",
@@ -122,6 +137,9 @@ async fn main(mut req: Request, env: Env, _: Context) -> Result<Response> {
             Err(response) => response,
         },
         (Method::Get | Method::Post, "/api/workspace") => workspace(req, env).await,
+        (_, path) if path.starts_with("/api/questionnaires/") => {
+            questionnaire::handle(req, env.d1("DB")?, &path["/api/questionnaires/".len()..]).await
+        }
         _ => Response::error("接口不存在", 404),
     };
     match result {
@@ -153,22 +171,31 @@ async fn workspace(mut req: Request, env: Env) -> Result<Response> {
     let authorization = req.headers().get("Authorization")?.unwrap_or_default();
     let Some(token) = authorization
         .strip_prefix("Bearer ")
-        .filter(|token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .filter(|token| valid_key(token))
     else {
         return Response::error("缺少试验工作台凭证", 401);
     };
     let db = env.d1("DB")?;
     let row = db
-        .prepare("SELECT revision, document FROM workspaces WHERE token = ?1")
+        .prepare(
+            "SELECT revision, document, questionnaire_key, inbox FROM workspaces WHERE token = ?1",
+        )
         .bind(&[token.into()])?
         .first::<Stored>(None)
         .await?;
-    let (revision, mut workspace) = match row {
-        Some(row) => (row.revision, serde_json::from_str(&row.document)?),
-        None => (0, Workspace::default()),
+    let (revision, mut workspace, mut questionnaire_key, mut inbox) = match row {
+        Some(row) => (
+            row.revision,
+            serde_json::from_str(&row.document)?,
+            row.questionnaire_key,
+            serde_json::from_str::<Vec<Inquiry>>(&row.inbox)?,
+        ),
+        None => (0, Workspace::default(), None, vec![]),
     };
     if req.method() == Method::Get {
-        return Response::from_json(&json!({ "revision": revision, "workspace": workspace }));
+        return Response::from_json(
+            &json!({ "revision": revision, "workspace": workspace, "questionnaire_key": questionnaire_key, "inbox": inbox }),
+        );
     }
     let change: Change = match read_json(&mut req).await {
         Ok(change) => change,
@@ -177,20 +204,51 @@ async fn workspace(mut req: Request, env: Env) -> Result<Response> {
     if change.revision != revision {
         return Response::error("工作台版本已更新，请刷新后重试", 409);
     }
-    if let Err(message) = workspace.apply(change.action) {
-        return Response::error(message, 422);
+    match change.action {
+        Action::SetQuestionnaire { key } => {
+            if key
+                .as_deref()
+                .is_some_and(|key| !valid_key(key) || key == token)
+            {
+                return Response::error("问卷链接无效", 422);
+            }
+            questionnaire_key = key;
+        }
+        Action::ResolveInquiry { id, create_project } => {
+            let Some(index) = inbox.iter().position(|entry| entry.id == id) else {
+                return Response::error("需求不存在或已处理", 404);
+            };
+            let inquiry = &inbox[index];
+            if create_project
+                && let Err(message) = workspace.apply(Action::CreateProject {
+                    name: inquiry.name.clone(),
+                    requirements: inquiry.requirements(),
+                })
+            {
+                return Response::error(message, 422);
+            }
+            inbox.remove(index);
+        }
+        action => {
+            if let Err(message) = workspace.apply(action) {
+                return Response::error(message, 422);
+            }
+        }
     }
     let document = serde_json::to_string(&workspace)?;
     if document.len() > 500_000 {
         return Response::error("试验工作台已达到存储上限", 422);
     }
     let updated = db.prepare(
-        "INSERT INTO workspaces (token, revision, document) VALUES (?1, ?2 + 1, ?3)
-         ON CONFLICT (token) DO UPDATE SET revision = excluded.revision, document = excluded.document
+        "INSERT INTO workspaces (token, revision, document, questionnaire_key, inbox) VALUES (?1, ?2 + 1, ?3, ?4, ?5)
+         ON CONFLICT (token) DO UPDATE SET revision = excluded.revision, document = excluded.document,
+             questionnaire_key = excluded.questionnaire_key, inbox = excluded.inbox
          WHERE workspaces.revision = ?2"
-    ).bind(&[token.into(), revision.into(), document.into()])?.run().await?;
+    ).bind(&[token.into(), revision.into(), document.into(), questionnaire_key.as_deref().map(Into::into).unwrap_or(JsValue::NULL), serde_json::to_string(&inbox)?.into()])?.run().await?;
     if updated.meta()?.and_then(|meta| meta.changes) != Some(1) {
         return Response::error("工作台版本已更新，请刷新后重试", 409);
     }
-    Response::from_json(&json!({ "revision": revision + 1, "workspace": workspace }))
+    Response::from_json(
+        &json!({ "revision": revision + 1, "workspace": workspace, "questionnaire_key": questionnaire_key, "inbox": inbox }),
+    )
 }

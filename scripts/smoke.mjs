@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 const [base, main] = process.argv.slice(2);
 const key = randomBytes(32).toString("hex");
@@ -83,6 +83,59 @@ assert.equal(
   0,
 );
 await workspace(undefined, "", 401);
+const questionnaire = randomBytes(32).toString("hex");
+const active = await workspace({
+  revision: saved.revision,
+  action: "set_questionnaire",
+  key: questionnaire,
+});
+const endpoint = new URL(`/api/questionnaires/${questionnaire}`, base);
+assert.deepEqual(await (await fetch(endpoint)).json(), { open: true });
+const inquiry = {
+  id: randomUUID(),
+  name: "客户问卷（虚构）",
+  home: "新房待装修",
+  systems: ["灯光", "窗帘"],
+  budget: "待确认",
+  notes: "示例：窗帘定时开启",
+};
+async function submit(body, status) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.status, status, await response.clone().text());
+}
+await submit({ ...inquiry, systems: ["无效选项"] }, 422);
+await submit(inquiry, 200);
+await submit(inquiry, 200);
+const inbox = await workspace();
+assert.equal(inbox.revision, active.revision + 1);
+assert.equal(inbox.inbox.length, 1);
+const other = await workspace(undefined, randomBytes(32).toString("hex"));
+assert.deepEqual(other.inbox, []);
+assert.equal(other.questionnaire_key, null);
+const claimed = await workspace({
+  revision: inbox.revision,
+  action: "resolve_inquiry",
+  id: inquiry.id,
+  create_project: true,
+});
+assert.equal(claimed.inbox.length, 0);
+assert.equal(claimed.workspace.projects[1].name, inquiry.name);
+assert.match(claimed.workspace.projects[1].requirements, /窗帘定时开启/);
+await workspace({
+  revision: claimed.revision,
+  action: "set_questionnaire",
+  key: null,
+});
+assert.equal((await fetch(endpoint)).status, 404);
+await submit({ ...inquiry, id: randomUUID() }, 404);
+console.log(
+  "Verified questionnaire submission, isolation, conversion and link closure.",
+);
+
 if (main) {
   const response = await fetch(new URL("/api/workspace", main), {
     headers: { Authorization: `Bearer ${key}` },
