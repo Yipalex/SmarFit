@@ -248,12 +248,14 @@ async function load() {
       localStorage.setItem("smarfit-demo-key", token);
     }
     apply(await api<State>("/api/workspace"));
+    const currentTab = tab.value;
     showProject(
       Math.min(
         selected.value,
         Math.max(0, workspace.value.projects.length - 1),
       ),
     );
+    tab.value = currentTab;
     ready.value = true;
   } catch (cause) {
     error.value = (cause as Error).message;
