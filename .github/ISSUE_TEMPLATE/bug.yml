@@ -1,0 +1,12 @@
+name: 问题反馈
+description: 报告可复现的问题
+body:
+  - type: textarea
+    attributes:
+      label: 复现步骤和预期结果
+      description: 请使用虚构样例，避免粘贴客户资料或凭据。
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: 页脚版本与浏览器

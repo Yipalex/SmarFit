@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+worker/build/
+.wrangler/
+.dev.vars*
+.env*
+.DS_Store
+worker/wrangler.generated.json

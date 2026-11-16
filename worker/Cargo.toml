@@ -1,0 +1,13 @@
+[package]
+name = "smarfit-worker"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+worker = { version = "0.9", features = ["d1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smarfit-core = { path = "../core" }

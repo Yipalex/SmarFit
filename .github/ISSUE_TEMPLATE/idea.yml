@@ -1,0 +1,8 @@
+name: 功能建议
+description: 描述工作中遇到的问题
+body:
+  - type: textarea
+    attributes:
+      label: 场景、当前做法及希望改进的结果
+    validations:
+      required: true
