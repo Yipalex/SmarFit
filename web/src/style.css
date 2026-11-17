@@ -765,13 +765,39 @@ footer {
 .floor-tools,
 .floor-scale {
   display: flex;
-  align-items: end;
+  align-items: center;
   flex-wrap: wrap;
   gap: 9px;
   margin-bottom: 12px;
 }
-.floor-file input {
-  max-width: min(100%, 270px);
+.floor-file {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 650;
+}
+.floor-file:hover {
+  background: #f1e6d8;
+}
+.floor-file:focus-within {
+  outline: 2px solid #956431;
+  outline-offset: 3px;
+}
+.floor-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+.wifi-legend label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.wifi-legend label input {
+  margin: 0;
+}
+[data-theme="night"] .floor-file:hover {
+  background: #49392c;
 }
 .floor-scale {
   border: 1px solid var(--line);

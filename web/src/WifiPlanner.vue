@@ -449,9 +449,11 @@ watch(
     <div class="wifi-layout">
       <section class="wifi-sheet">
         <div class="floor-tools">
-          <label class="floor-file"
-            >户型底图
+          <label class="floor-file">
+            {{ floor ? "更换底图" : "上传户型底图" }}
             <input
+              class="sr-only"
+              aria-label="户型底图"
               type="file"
               accept="image/jpeg,image/png,image/webp"
               :disabled="busy || uploading"
@@ -475,6 +477,7 @@ watch(
             </button>
           </template>
           <span v-if="uploading" role="status">正在处理底图…</span>
+          <span v-else-if="calibration" class="floor-label">底图已标定</span>
         </div>
         <p v-if="floorError" class="alert" role="alert">{{ floorError }}</p>
         <div v-if="mode === 'scale'" class="floor-scale">
