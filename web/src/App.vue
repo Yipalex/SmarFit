@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import ThemeSwitch from "./ThemeSwitch.vue";
 import WifiPlanner, { type WifiPlan } from "./WifiPlanner.vue";
+import type { FloorUpdate, WifiFloor } from "./wifiFloor";
 
 type Category = "equipment" | "service";
 type Line = {
@@ -47,6 +49,7 @@ const workspace = ref<Workspace>({ projects: [], catalog: [] });
 const revision = ref(0);
 const wifiPlans = ref<Record<number, WifiPlan>>({});
 const wifiOpen = ref(false);
+const wifiFloor = ref<WifiFloor | null>(null);
 const tab = ref<"projects" | "catalog" | "inbox">("projects");
 const tabLabels = {
   projects: "项目与报价",
@@ -127,7 +130,7 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
     headers: {
-      ...(path === "/api/workspace"
+      ...(path === "/api/workspace" || path.startsWith("/api/wifi/floor/")
         ? { Authorization: `Bearer ${token}` }
         : {}),
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -303,10 +306,32 @@ async function mutate(action: Record<string, unknown>, done: () => void) {
   }
 }
 
-function saveWifi(plan: WifiPlan) {
-  void mutate({ action: "save_wifi", project: selected.value, plan }, () => {
-    message.value = "Wi-Fi 规划已保存";
-  });
+async function openWifi() {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  const index = selected.value;
+  try {
+    const floor = await api<WifiFloor | null>(`/api/wifi/floor/${index}`);
+    if (selected.value === index && tab.value === "projects") {
+      wifiFloor.value = floor;
+      wifiOpen.value = true;
+    }
+  } catch (cause) {
+    error.value = (cause as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+function saveWifi(plan: WifiPlan, floor: FloorUpdate) {
+  void mutate(
+    { action: "save_wifi", project: selected.value, plan, floor },
+    () => {
+      wifiFloor.value = floor.kind === "set" ? floor.floor : null;
+      message.value = "Wi-Fi 规划已保存";
+    },
+  );
 }
 
 function addWifiQuote(index: number, quantity: number) {
@@ -448,13 +473,16 @@ async function printCustomer() {
 
     <div class="main-shell">
       <header class="topbar">
-        <span>工作台 <span class="slash">/</span> {{ tabLabels[tab] }}</span
-        ><a
-          href="https://github.com/Yipalex/SmarFit"
-          target="_blank"
-          rel="noopener noreferrer"
-          >GitHub ↗</a
-        >
+        <span>工作台 <span class="slash">/</span> {{ tabLabels[tab] }}</span>
+        <div class="topbar-actions">
+          <ThemeSwitch />
+          <a
+            href="https://github.com/Yipalex/SmarFit"
+            target="_blank"
+            rel="noopener noreferrer"
+            >GitHub ↗</a
+          >
+        </div>
       </header>
       <main>
         <div class="page-head">
@@ -544,14 +572,7 @@ async function printCustomer() {
               >
             </div>
             <div class="wifi-project-entry">
-              <button
-                type="button"
-                :disabled="busy"
-                @click="
-                  error = '';
-                  wifiOpen = true;
-                "
-              >
+              <button type="button" :disabled="busy" @click="openWifi">
                 Wi-Fi 规划
               </button>
               <span v-if="wifiPlans[selected]"
@@ -840,6 +861,7 @@ async function printCustomer() {
     <WifiPlanner
       v-if="wifiOpen && project"
       :saved="wifiPlans[selected]"
+      :saved-floor="wifiFloor"
       :catalog="wifiCatalog"
       :busy="busy"
       :error="error"

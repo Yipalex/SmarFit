@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
+import {
+  calibratedSize,
+  prepareFloor,
+  type FloorImage,
+  type FloorUpdate,
+  type WifiFloor,
+} from "./wifiFloor";
 
 type Point = { x: number; y: number };
 type Material = "partition" | "brick" | "concrete";
@@ -13,12 +20,13 @@ export type WifiPlan = {
 
 const props = defineProps<{
   saved?: WifiPlan;
+  savedFloor: WifiFloor | null;
   busy: boolean;
   catalog: { name: string; index: number; price: string }[];
   error: string;
 }>();
 const emit = defineEmits<{
-  save: [WifiPlan];
+  save: [WifiPlan, FloorUpdate];
   quote: [number, number];
   close: [];
 }>();
@@ -32,7 +40,15 @@ const accessPoints = ref<Point[]>(
 const walls = ref<Wall[]>(
   props.saved?.walls.map((wall) => ({ ...wall })) ?? [],
 );
-const mode = ref<"ap" | "wall">("ap");
+const mode = ref<"ap" | "wall" | "scale">("ap");
+const floor = shallowRef<FloorImage | null>(props.savedFloor);
+const renderedFloor = shallowRef<HTMLImageElement>();
+const calibration = shallowRef<WifiFloor | null>(props.savedFloor);
+const scalePoints = ref<Point[]>([]);
+const meters = ref<number | "">("");
+const uploading = ref(false);
+const heatVisible = ref(true);
+const floorError = ref("");
 const anchor = ref<Point>();
 const material = ref<Material>("partition");
 const item = ref<number | "">("");
@@ -55,8 +71,10 @@ const wallColors = {
   concrete: "#362d25",
 };
 const bands = ["#fbf7ef", "#d9987b", "#e9c795", "#a9bccd"];
-const valid = computed(() =>
-  [width.value, height.value].every((value) => value >= 1 && value <= 50),
+const valid = computed(
+  () =>
+    [width.value, height.value].every((value) => value >= 1 && value <= 50) &&
+    (!floor.value || Boolean(calibration.value)),
 );
 const plan = computed<WifiPlan>(() => ({
   width_cm: Math.round(width.value * 100),
@@ -79,26 +97,142 @@ function geometry(plan: WifiPlan) {
   ]);
 }
 
+function sameFloor(saved: WifiFloor | null, current: WifiFloor | null) {
+  return (
+    saved === current ||
+    (saved !== null &&
+      current !== null &&
+      saved.jpeg === current.jpeg &&
+      saved.distance_cm === current.distance_cm &&
+      saved.from.x === current.from.x &&
+      saved.from.y === current.from.y &&
+      saved.to.x === current.to.x &&
+      saved.to.y === current.to.y)
+  );
+}
+
 const changed = computed(
   () =>
+    Boolean(floor.value && !calibration.value) ||
+    !sameFloor(props.savedFloor, calibration.value) ||
     geometry(plan.value) !==
-    geometry(
-      props.saved ?? {
-        width_cm: 1200,
-        height_cm: 800,
-        access_points: [],
-        walls: [],
-      },
-    ),
+      geometry(
+        props.saved ?? {
+          width_cm: 1200,
+          height_cm: 800,
+          access_points: [],
+          walls: [],
+        },
+      ),
 );
 const hint = computed(() =>
-  mode.value === "ap"
-    ? "点击网格放置 AP  ·  最多 8 个"
-    : anchor.value
-      ? "点击墙体终点"
-      : "点击墙体起点，再点击终点  ·  最多 24 段",
+  mode.value === "scale"
+    ? scalePoints.value.length === 2
+      ? "输入两点间的实际距离，再应用标定"
+      : `请在底图上点击标定点 ${scalePoints.value.length + 1}`
+    : mode.value === "ap"
+      ? "点击网格放置 AP  ·  最多 8 个"
+      : anchor.value
+        ? "点击墙体终点"
+        : "点击墙体起点，再点击终点  ·  最多 24 段",
 );
-const aspect = computed(() => (valid.value ? width.value / height.value : 1.5));
+const aspect = computed(() =>
+  floor.value
+    ? floor.value.pixel_width / floor.value.pixel_height
+    : valid.value
+      ? width.value / height.value
+      : 1.5,
+);
+
+watch(
+  floor,
+  (image, _, onCleanup) => {
+    renderedFloor.value = undefined;
+    if (!image) return;
+    const rendering = new Image();
+    let stale = false;
+    rendering.onload = () => {
+      if (!stale) renderedFloor.value = rendering;
+    };
+    rendering.onerror = () => {
+      if (!stale) floorError.value = "底图无法显示，请重新上传。";
+    };
+    rendering.src = `data:image/jpeg;base64,${image.jpeg}`;
+    onCleanup(() => {
+      stale = true;
+    });
+  },
+  { immediate: true },
+);
+
+async function upload(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || uploading.value) return;
+  if (
+    (accessPoints.value.length || walls.value.length) &&
+    !window.confirm("换用新底图会清除当前墙体和 AP 点位。继续吗？")
+  )
+    return;
+  floorError.value = "";
+  uploading.value = true;
+  try {
+    const image = await prepareFloor(file);
+    floor.value = image;
+    calibration.value = null;
+    accessPoints.value = [];
+    walls.value = [];
+    beginCalibration();
+  } catch (cause) {
+    floorError.value = (cause as Error).message;
+  } finally {
+    uploading.value = false;
+  }
+}
+
+function beginCalibration() {
+  scalePoints.value = [];
+  meters.value = calibration.value ? calibration.value.distance_cm / 100 : "";
+  mode.value = "scale";
+  floorError.value = "";
+}
+
+function applyCalibration() {
+  const [from, to] = scalePoints.value;
+  const distance = Math.round(Number(meters.value) * 100);
+  if (!floor.value || !from || !to) return;
+  const size = calibratedSize(floor.value, from, to, distance);
+  if (!size) {
+    floorError.value =
+      "请使用相距更远的标定点和有效距离，确保户型宽、深均为 1–50 米。";
+    return;
+  }
+  width.value = size.width / 100;
+  height.value = size.height / 100;
+  calibration.value = { ...floor.value, from, to, distance_cm: distance };
+  mode.value = "ap";
+  scalePoints.value = [];
+  floorError.value = "";
+}
+
+function removeFloor() {
+  floor.value = null;
+  calibration.value = null;
+  scalePoints.value = [];
+  floorError.value = "";
+  mode.value = "ap";
+}
+
+function save() {
+  emit(
+    "save",
+    plan.value,
+    calibration.value
+      ? { kind: "set", floor: calibration.value }
+      : { kind: "remove" },
+  );
+}
 
 onMounted(() => dialog.value?.showModal());
 watch(mode, () => {
@@ -112,16 +246,24 @@ function exit() {
 }
 
 function mark(event: MouseEvent) {
-  if (!valid.value || props.busy) return;
+  if (props.busy || uploading.value || (mode.value !== "scale" && !valid.value))
+    return;
   const bounds = canvas.value?.getBoundingClientRect();
   if (!bounds) return;
+  const step = floor.value ? 1 : 25;
   const grid = (offset: number, size: number) =>
-    Math.min(1000, Math.max(0, Math.round((offset / size) * 40) * 25));
+    Math.min(
+      1000,
+      Math.max(0, Math.round(((offset / size) * 1000) / step) * step),
+    );
   const point = {
     x: grid(event.clientX - bounds.left, bounds.width),
     y: grid(event.clientY - bounds.top, bounds.height),
   };
-  if (mode.value === "ap") {
+  if (mode.value === "scale") {
+    if (scalePoints.value.length === 2) scalePoints.value = [];
+    scalePoints.value.push(point);
+  } else if (mode.value === "ap") {
     if (
       accessPoints.value.length < 8 &&
       !accessPoints.value.some(({ x, y }) => x === point.x && y === point.y)
@@ -146,19 +288,43 @@ function draw() {
   const { width: w, height: h } = surface;
   context.fillStyle = bands[0];
   context.fillRect(0, 0, w, h);
-  if (coverage.value) {
+  if (renderedFloor.value) context.drawImage(renderedFloor.value, 0, 0, w, h);
+  if (coverage.value && heatVisible.value) {
+    context.globalAlpha = renderedFloor.value ? 0.46 : 1;
     const { size, levels } = coverage.value;
     levels.forEach((level, index) => {
+      const column = index % size;
+      const row = Math.floor(index / size);
+      const left = Math.round((column * w) / size);
+      const top = Math.round((row * h) / size);
       context.fillStyle = bands[level];
       context.fillRect(
-        Math.floor(((index % size) * w) / size),
-        Math.floor((Math.floor(index / size) * h) / size),
-        Math.ceil(w / size),
-        Math.ceil(h / size),
+        left,
+        top,
+        Math.round(((column + 1) * w) / size) - left,
+        Math.round(((row + 1) * h) / size) - top,
       );
     });
   }
-  context.strokeStyle = "#55403124";
+  context.globalAlpha = 1;
+  const scale = mode.value === "scale" ? scalePoints.value : [];
+  if (scale.length) {
+    context.strokeStyle = "#ad6333";
+    context.fillStyle = "#ad6333";
+    context.lineWidth = 3;
+    context.beginPath();
+    scale.forEach(({ x, y }, index) => {
+      if (index === 0) context.moveTo((x * w) / 1000, (y * h) / 1000);
+      else context.lineTo((x * w) / 1000, (y * h) / 1000);
+    });
+    context.stroke();
+    scale.forEach(({ x, y }) => {
+      context.beginPath();
+      context.arc((x * w) / 1000, (y * h) / 1000, 5, 0, 2 * Math.PI);
+      context.fill();
+    });
+  }
+  context.strokeStyle = renderedFloor.value ? "#55403114" : "#55403124";
   context.lineWidth = 1;
   context.beginPath();
   for (let i = 1; i < 10; i++) {
@@ -240,9 +406,23 @@ watch(
   { immediate: true },
 );
 
-watch([canvas, plan, coverage, anchor], () => void nextTick(draw), {
-  flush: "post",
-});
+watch(
+  [
+    canvas,
+    plan,
+    coverage,
+    anchor,
+    renderedFloor,
+    heatVisible,
+    mode,
+    scalePoints,
+  ],
+  () => void nextTick(draw),
+  {
+    flush: "post",
+    deep: true,
+  },
+);
 </script>
 
 <template>
@@ -268,15 +448,63 @@ watch([canvas, plan, coverage, anchor], () => void nextTick(draw), {
     </header>
     <div class="wifi-layout">
       <section class="wifi-sheet">
-        <div class="wifi-dimensions">
+        <div class="floor-tools">
+          <label class="floor-file"
+            >户型底图
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              :disabled="busy || uploading"
+              @change="upload"
+            />
+          </label>
+          <template v-if="floor">
+            <button
+              type="button"
+              :disabled="busy || uploading"
+              @click="beginCalibration"
+            >
+              {{ calibration ? "重新标定" : "重新选点" }}
+            </button>
+            <button
+              type="button"
+              :disabled="busy || uploading"
+              @click="removeFloor"
+            >
+              移除底图
+            </button>
+          </template>
+          <span v-if="uploading" role="status">正在处理底图…</span>
+        </div>
+        <p v-if="floorError" class="alert" role="alert">{{ floorError }}</p>
+        <div v-if="mode === 'scale'" class="floor-scale">
+          <label
+            >两点实际距离（米）<input
+              v-model.number="meters"
+              type="number"
+              min="0.1"
+              max="70.71"
+              step="0.01"
+          /></label>
+          <button
+            type="button"
+            class="primary"
+            :disabled="scalePoints.length !== 2 || !meters || busy"
+            @click="applyCalibration"
+          >
+            应用标定
+          </button>
+        </div>
+        <div v-if="!floor || calibration" class="wifi-dimensions">
           <label
             >户型宽度（米）<input
               v-model.number="width"
               type="number"
               min="1"
               max="50"
-              step="0.1"
+              step="0.01"
               :disabled="busy"
+              :readonly="Boolean(floor)"
           /></label>
           <label
             >户型深度（米）<input
@@ -284,14 +512,16 @@ watch([canvas, plan, coverage, anchor], () => void nextTick(draw), {
               type="number"
               min="1"
               max="50"
-              step="0.1"
+              step="0.01"
               :disabled="busy"
+              :readonly="Boolean(floor)"
           /></label>
         </div>
         <div class="wifi-tools" aria-label="布点工具">
           <button
             type="button"
             :aria-pressed="mode === 'ap'"
+            :disabled="Boolean(floor && !calibration)"
             @click="mode = 'ap'"
           >
             放置 AP
@@ -299,6 +529,7 @@ watch([canvas, plan, coverage, anchor], () => void nextTick(draw), {
           <button
             type="button"
             :aria-pressed="mode === 'wall'"
+            :disabled="Boolean(floor && !calibration)"
             @click="mode = 'wall'"
           >
             绘制墙体
@@ -314,7 +545,7 @@ watch([canvas, plan, coverage, anchor], () => void nextTick(draw), {
           </select>
         </div>
         <p class="wifi-hint">
-          {{ valid ? hint : "请输入 1–50 米的宽度和深度" }}
+          {{ valid || mode === "scale" ? hint : "请输入 1–50 米的宽度和深度" }}
         </p>
         <div class="wifi-map">
           <canvas
@@ -326,6 +557,9 @@ watch([canvas, plan, coverage, anchor], () => void nextTick(draw), {
           ></canvas>
         </div>
         <div class="wifi-legend">
+          <label v-if="floor"
+            ><input v-model="heatVisible" type="checkbox" /> 显示热力图</label
+          >
           <span><i :style="{ background: bands[3] }"></i> ≥ −67 dBm</span>
           <span><i :style="{ background: bands[2] }"></i> −75 至 −67 dBm</span>
           <span><i :style="{ background: bands[1] }"></i> &lt; −75 dBm</span>
@@ -379,8 +613,10 @@ watch([canvas, plan, coverage, anchor], () => void nextTick(draw), {
         <button
           class="primary"
           type="button"
-          :disabled="!valid || busy || (!changed && Boolean(saved))"
-          @click="emit('save', plan)"
+          :disabled="
+            !valid || busy || uploading || (!changed && Boolean(saved))
+          "
+          @click="save"
         >
           保存规划
         </button>

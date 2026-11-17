@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 
 const [base, main] = process.argv.slice(2);
@@ -173,6 +174,65 @@ assert.deepEqual(
 );
 console.log(
   "Verified Wi-Fi coverage, wall attenuation and project plan persistence.",
+);
+
+const artwork = {
+  jpeg: readFileSync(new URL("./fixtures/floor.jpg", import.meta.url)).toString(
+    "base64",
+  ),
+  pixel_width: 800,
+  pixel_height: 400,
+  from: { x: 250, y: 500 },
+  to: { x: 750, y: 500 },
+  distance_cm: 1000,
+};
+const saveFloor = {
+  action: "save_wifi",
+  project: 0,
+  plan: wifi,
+  floor: { kind: "set", floor: artwork },
+};
+const beforeFloor = await workspace();
+await workspace(
+  {
+    ...saveFloor,
+    revision: beforeFloor.revision,
+    plan: { ...wifi, width_cm: 1800 },
+  },
+  key,
+  422,
+);
+const withFloor = await workspace({
+  ...saveFloor,
+  revision: beforeFloor.revision,
+});
+assert.deepEqual(withFloor.wifi, { 0: wifi });
+const artworkUrl = new URL("/api/wifi/floor/0", base);
+const getArtwork = (token) =>
+  fetch(artworkUrl, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+assert.equal((await getArtwork()).status, 401);
+assert.equal(
+  await (await getArtwork(randomBytes(32).toString("hex"))).json(),
+  null,
+);
+assert.deepEqual(await (await getArtwork(key)).json(), artwork);
+await workspace(
+  { ...saveFloor, revision: beforeFloor.revision, floor: { kind: "remove" } },
+  key,
+  409,
+);
+assert.deepEqual(await (await getArtwork(key)).json(), artwork);
+const withoutFloor = await workspace({
+  ...saveFloor,
+  revision: withFloor.revision,
+  floor: { kind: "remove" },
+});
+assert.deepEqual(withoutFloor.wifi, { 0: wifi });
+assert.equal(await (await getArtwork(key)).json(), null);
+console.log(
+  "Verified calibrated floor persistence, read authorization and removal.",
 );
 
 if (main) {

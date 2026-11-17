@@ -10,7 +10,9 @@ use worker::wasm_bindgen::JsValue;
 use worker::*;
 
 mod questionnaire;
+mod wifi_floor;
 use questionnaire::{Inquiry, valid_key};
+use wifi_floor::FloorUpdate;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Workspace {
@@ -54,6 +56,7 @@ enum Action {
     SaveWifi {
         project: usize,
         plan: Plan,
+        floor: Option<FloorUpdate>,
     },
     SaveQuote {
         project: usize,
@@ -154,6 +157,18 @@ async fn main(mut req: Request, env: Env, _: Context) -> Result<Response> {
             Err(response) => response,
         },
         (Method::Get | Method::Post, "/api/workspace") => workspace(req, env).await,
+        (Method::Get, path) if path.starts_with("/api/wifi/floor/") => {
+            if let Some(token) = workspace_token(&req)? {
+                match path["/api/wifi/floor/".len()..].parse::<usize>() {
+                    Ok(project) if project < 10 => {
+                        wifi_floor::load(&env.d1("DB")?, &token, project).await
+                    }
+                    _ => Response::error("项目不存在", 404),
+                }
+            } else {
+                Response::error("缺少试验工作台凭证", 401)
+            }
+        }
         (_, path) if path.starts_with("/api/questionnaires/") => {
             questionnaire::handle(req, env.d1("DB")?, &path["/api/questionnaires/".len()..]).await
         }
@@ -174,24 +189,46 @@ async fn main(mut req: Request, env: Env, _: Context) -> Result<Response> {
 async fn read_json<T: serde::de::DeserializeOwned>(
     req: &mut Request,
 ) -> std::result::Result<T, Result<Response>> {
+    read_json_limit(req, 65_536).await
+}
+
+async fn read_json_limit<T: serde::de::DeserializeOwned>(
+    req: &mut Request,
+    limit: usize,
+) -> std::result::Result<T, Result<Response>> {
+    if req
+        .headers()
+        .get("Content-Length")
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|length| length > limit)
+    {
+        return Err(Response::error("请求过大", 413));
+    }
     let bytes = req
         .bytes()
         .await
         .map_err(|_| Response::error("无法读取请求", 400))?;
-    if bytes.len() > 65_536 {
+    if bytes.len() > limit {
         return Err(Response::error("请求过大", 413));
     }
     serde_json::from_slice(&bytes).map_err(|_| Response::error("请求格式无效", 400))
 }
 
-async fn workspace(mut req: Request, env: Env) -> Result<Response> {
+fn workspace_token(req: &Request) -> Result<Option<String>> {
     let authorization = req.headers().get("Authorization")?.unwrap_or_default();
-    let Some(token) = authorization
+    Ok(authorization
         .strip_prefix("Bearer ")
         .filter(|token| valid_key(token))
-    else {
+        .map(str::to_owned))
+}
+
+async fn workspace(mut req: Request, env: Env) -> Result<Response> {
+    let Some(token) = workspace_token(&req)? else {
         return Response::error("缺少试验工作台凭证", 401);
     };
+    let token = token.as_str();
     let db = env.d1("DB")?;
     let row = db
         .prepare(
@@ -215,20 +252,33 @@ async fn workspace(mut req: Request, env: Env) -> Result<Response> {
             &json!({ "revision": revision, "workspace": workspace, "questionnaire_key": questionnaire_key, "inbox": inbox, "wifi": wifi }),
         );
     }
-    let change: Change = match read_json(&mut req).await {
+    let change: Change = match read_json_limit(&mut req, 200_000).await {
         Ok(change) => change,
         Err(response) => return response,
     };
     if change.revision != revision {
         return Response::error("工作台版本已更新，请刷新后重试", 409);
     }
+    let mut floor_update = None;
     match change.action {
-        Action::SaveWifi { project, plan } => {
+        Action::SaveWifi {
+            project,
+            plan,
+            floor,
+        } => {
             if workspace.projects.get(project).is_none() {
                 return Response::error("项目不存在", 404);
             }
             if let Err(message) = plan.validate() {
                 return Response::error(message, 422);
+            }
+            if let Some(update) = floor {
+                if let FloorUpdate::Set { floor } = &update
+                    && !floor.validate(&plan)
+                {
+                    return Response::error("底图或标定尺寸无效", 422);
+                }
+                floor_update = Some(wifi_floor::update(&db, token, project, update)?);
             }
             wifi.insert(project, plan);
         }
@@ -266,12 +316,21 @@ async fn workspace(mut req: Request, env: Env) -> Result<Response> {
     if document.len() > 500_000 {
         return Response::error("试验工作台已达到存储上限", 422);
     }
-    let updated = db.prepare(
+    let change = db.prepare(
         "INSERT INTO workspaces (token, revision, document, questionnaire_key, inbox, wifi) VALUES (?1, ?2 + 1, ?3, ?4, ?5, ?6)
          ON CONFLICT (token) DO UPDATE SET revision = excluded.revision, document = excluded.document,
              questionnaire_key = excluded.questionnaire_key, inbox = excluded.inbox, wifi = excluded.wifi
          WHERE workspaces.revision = ?2"
-    ).bind(&[token.into(), revision.into(), document.into(), questionnaire_key.as_deref().map(Into::into).unwrap_or(JsValue::NULL), serde_json::to_string(&inbox)?.into(), serde_json::to_string(&wifi)?.into()])?.run().await?;
+    ).bind(&[token.into(), revision.into(), document.into(), questionnaire_key.as_deref().map(Into::into).unwrap_or(JsValue::NULL), serde_json::to_string(&inbox)?.into(), serde_json::to_string(&wifi)?.into()])?;
+    let updated = match floor_update {
+        Some(floor) => db
+            .batch(vec![change, floor])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::RustError("missing workspace update result".into()))?,
+        None => change.run().await?,
+    };
     if updated.meta()?.and_then(|meta| meta.changes) != Some(1) {
         return Response::error("工作台版本已更新，请刷新后重试", 409);
     }

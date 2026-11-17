@@ -761,3 +761,156 @@ footer {
     grid-template-columns: 1fr;
   }
 }
+
+.floor-tools,
+.floor-scale {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+.floor-file input {
+  max-width: min(100%, 270px);
+}
+.floor-scale {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8eee0;
+  padding: 10px;
+}
+.floor-scale input {
+  max-width: 135px;
+}
+.wifi-legend input {
+  accent-color: var(--espresso);
+}
+
+.topbar-actions,
+.theme-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.theme-switch {
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.theme-switch button {
+  padding: 5px 7px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.theme-switch button[aria-pressed="true"] {
+  background: #f1e6d8;
+  color: #483426;
+}
+.theme-switch span {
+  margin-right: 2px;
+  font-size: 14px;
+}
+
+:root[data-theme="night"] {
+  color-scheme: dark;
+  color: #f3e9db;
+  background: #1b1816;
+  --espresso: #e4bf89;
+  --muted: #c5b3a1;
+  --line: #4d4035;
+}
+[data-theme="night"] :is(.panel, .topbar, dialog) {
+  color: inherit;
+  background: #25201c;
+}
+[data-theme="night"] :is(button, input, textarea, select) {
+  border-color: #645243;
+  background: #302822;
+}
+[data-theme="night"]
+  :is(button:hover:not(:disabled), .wifi-tools [aria-pressed="true"]) {
+  background: #49392c;
+}
+[data-theme="night"] .sidebar nav button {
+  border-color: transparent;
+}
+[data-theme="night"] .primary,
+[data-theme="night"] .primary:hover:not(:disabled) {
+  background: #e4bf89;
+  color: #281e17;
+  border-color: #e4bf89;
+}
+[data-theme="night"] .primary:hover:not(:disabled) {
+  background: #f1d4a7;
+}
+[data-theme="night"]
+  :is(
+    .demo-note,
+    .success,
+    .count,
+    .project-icon,
+    .empty-workspace > span,
+    th,
+    .floor-scale
+  ) {
+  background: #392e25;
+  color: #e9cba3;
+}
+[data-theme="night"] .project-list button.current {
+  background: #3f3228;
+  border-color: #745941;
+}
+[data-theme="night"] .alert {
+  background: #482d25;
+  color: #ffcaad;
+}
+[data-theme="night"] :is(.wifi-details, .wifi-map) {
+  background: #302720;
+}
+[data-theme="night"] .theme-switch button {
+  background: transparent;
+  border-color: transparent;
+}
+[data-theme="night"] .theme-switch button[aria-pressed="true"] {
+  background: #54412f;
+  color: #f2d4a8;
+}
+
+:root[data-theme-transition]::view-transition-old(root),
+:root[data-theme-transition]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+:root[data-theme-transition]::view-transition-new(root) {
+  animation: theme-reveal 520ms cubic-bezier(0.22, 0.75, 0.25, 1) both;
+}
+@keyframes theme-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-origin));
+  }
+  to {
+    clip-path: circle(var(--theme-radius) at var(--theme-origin));
+  }
+}
+@media (max-width: 400px) {
+  .topbar-actions {
+    gap: 6px;
+  }
+  .theme-switch button {
+    padding-inline: 5px;
+  }
+}
+@media print {
+  :root[data-theme="night"] {
+    color-scheme: light;
+    color: black;
+    background: white;
+  }
+  [data-theme="night"] .print-quote th {
+    color: black;
+    background: #eee;
+  }
+}
