@@ -1,7 +1,10 @@
 // Required Notice: Copyright 2026 Alex Yip. SmarFit（智装工场）. Source marker: ximo. https://github.com/Yipalex/SmarFit
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use smarfit_core::wifi::Plan;
 use smarfit_core::{DraftLine, Quote, price};
 use worker::wasm_bindgen::JsValue;
 use worker::*;
@@ -48,6 +51,10 @@ enum Action {
         index: Option<usize>,
         item: DraftLine,
     },
+    SaveWifi {
+        project: usize,
+        plan: Plan,
+    },
     SaveQuote {
         project: usize,
         lines: Vec<DraftLine>,
@@ -61,6 +68,7 @@ struct Stored {
     document: String,
     questionnaire_key: Option<String>,
     inbox: String,
+    wifi: String,
 }
 
 impl Workspace {
@@ -84,7 +92,9 @@ impl Workspace {
                     published: vec![],
                 });
             }
-            Action::SetQuestionnaire { .. } | Action::ResolveInquiry { .. } => unreachable!(),
+            Action::SetQuestionnaire { .. }
+            | Action::ResolveInquiry { .. }
+            | Action::SaveWifi { .. } => unreachable!(),
             Action::SaveProduct { index, mut item } => {
                 item.quantity = 1;
                 let mut checked = price(vec![item])?;
@@ -136,6 +146,13 @@ async fn main(mut req: Request, env: Env, _: Context) -> Result<Response> {
             },
             Err(response) => response,
         },
+        (Method::Post, "/api/wifi/coverage") => match read_json::<Plan>(&mut req).await {
+            Ok(plan) => match plan.coverage() {
+                Ok(coverage) => Response::from_json(&coverage),
+                Err(message) => Response::error(message, 422),
+            },
+            Err(response) => response,
+        },
         (Method::Get | Method::Post, "/api/workspace") => workspace(req, env).await,
         (_, path) if path.starts_with("/api/questionnaires/") => {
             questionnaire::handle(req, env.d1("DB")?, &path["/api/questionnaires/".len()..]).await
@@ -178,23 +195,24 @@ async fn workspace(mut req: Request, env: Env) -> Result<Response> {
     let db = env.d1("DB")?;
     let row = db
         .prepare(
-            "SELECT revision, document, questionnaire_key, inbox FROM workspaces WHERE token = ?1",
+            "SELECT revision, document, questionnaire_key, inbox, wifi FROM workspaces WHERE token = ?1",
         )
         .bind(&[token.into()])?
         .first::<Stored>(None)
         .await?;
-    let (revision, mut workspace, mut questionnaire_key, mut inbox) = match row {
+    let (revision, mut workspace, mut questionnaire_key, mut inbox, mut wifi) = match row {
         Some(row) => (
             row.revision,
             serde_json::from_str(&row.document)?,
             row.questionnaire_key,
             serde_json::from_str::<Vec<Inquiry>>(&row.inbox)?,
+            serde_json::from_str::<BTreeMap<usize, Plan>>(&row.wifi)?,
         ),
-        None => (0, Workspace::default(), None, vec![]),
+        None => (0, Workspace::default(), None, vec![], BTreeMap::new()),
     };
     if req.method() == Method::Get {
         return Response::from_json(
-            &json!({ "revision": revision, "workspace": workspace, "questionnaire_key": questionnaire_key, "inbox": inbox }),
+            &json!({ "revision": revision, "workspace": workspace, "questionnaire_key": questionnaire_key, "inbox": inbox, "wifi": wifi }),
         );
     }
     let change: Change = match read_json(&mut req).await {
@@ -205,6 +223,15 @@ async fn workspace(mut req: Request, env: Env) -> Result<Response> {
         return Response::error("工作台版本已更新，请刷新后重试", 409);
     }
     match change.action {
+        Action::SaveWifi { project, plan } => {
+            if workspace.projects.get(project).is_none() {
+                return Response::error("项目不存在", 404);
+            }
+            if let Err(message) = plan.validate() {
+                return Response::error(message, 422);
+            }
+            wifi.insert(project, plan);
+        }
         Action::SetQuestionnaire { key } => {
             if key
                 .as_deref()
@@ -240,15 +267,15 @@ async fn workspace(mut req: Request, env: Env) -> Result<Response> {
         return Response::error("试验工作台已达到存储上限", 422);
     }
     let updated = db.prepare(
-        "INSERT INTO workspaces (token, revision, document, questionnaire_key, inbox) VALUES (?1, ?2 + 1, ?3, ?4, ?5)
+        "INSERT INTO workspaces (token, revision, document, questionnaire_key, inbox, wifi) VALUES (?1, ?2 + 1, ?3, ?4, ?5, ?6)
          ON CONFLICT (token) DO UPDATE SET revision = excluded.revision, document = excluded.document,
-             questionnaire_key = excluded.questionnaire_key, inbox = excluded.inbox
+             questionnaire_key = excluded.questionnaire_key, inbox = excluded.inbox, wifi = excluded.wifi
          WHERE workspaces.revision = ?2"
-    ).bind(&[token.into(), revision.into(), document.into(), questionnaire_key.as_deref().map(Into::into).unwrap_or(JsValue::NULL), serde_json::to_string(&inbox)?.into()])?.run().await?;
+    ).bind(&[token.into(), revision.into(), document.into(), questionnaire_key.as_deref().map(Into::into).unwrap_or(JsValue::NULL), serde_json::to_string(&inbox)?.into(), serde_json::to_string(&wifi)?.into()])?.run().await?;
     if updated.meta()?.and_then(|meta| meta.changes) != Some(1) {
         return Response::error("工作台版本已更新，请刷新后重试", 409);
     }
     Response::from_json(
-        &json!({ "revision": revision + 1, "workspace": workspace, "questionnaire_key": questionnaire_key, "inbox": inbox }),
+        &json!({ "revision": revision + 1, "workspace": workspace, "questionnaire_key": questionnaire_key, "inbox": inbox, "wifi": wifi }),
     )
 }

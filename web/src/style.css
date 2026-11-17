@@ -622,3 +622,142 @@ footer {
   text-decoration: underline;
   padding: 9px 4px;
 }
+
+.wifi-project-entry {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+.wifi-dialog {
+  width: min(94vw, 1050px);
+  max-height: 91dvh;
+  background: #fffcf7;
+}
+.wifi-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.wifi-head h2 {
+  font-size: 24px;
+}
+.wifi-head p,
+.wifi-hint {
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.wifi-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 255px);
+  gap: 22px;
+  padding-top: 16px;
+}
+.wifi-dimensions,
+.wifi-tools,
+.wifi-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.wifi-dimensions input {
+  width: 100px;
+}
+.wifi-tools {
+  margin-top: 12px;
+}
+.wifi-tools [aria-pressed="true"] {
+  background: #f1e6d8;
+  border-color: #956431;
+}
+.wifi-map {
+  background: #f5eee3;
+  border-radius: 8px;
+  min-height: 130px;
+  padding: 10px;
+  display: grid;
+  place-items: center;
+}
+.wifi-map canvas {
+  max-width: 100%;
+  max-height: 55vh;
+  width: auto;
+  height: auto;
+  border: 1px solid #ac9278;
+  cursor: crosshair;
+  touch-action: manipulation;
+}
+.wifi-legend {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.wifi-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 2px;
+  border-radius: 2px;
+}
+.wifi-details {
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: #faf4eb;
+  border-radius: 9px;
+  align-self: start;
+}
+.wifi-details h3 {
+  font-size: 14px;
+  margin: 12px 0 5px;
+}
+.wifi-details h3 span {
+  margin-left: 4px;
+  color: var(--muted);
+}
+.wifi-metric {
+  font-size: 36px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.wifi-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  max-height: 140px;
+  overflow: auto;
+}
+.wifi-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  padding: 3px 0;
+  font-size: 13px;
+}
+.wifi-list button {
+  padding: 3px 6px;
+}
+.wifi-details > .primary {
+  width: 100%;
+  margin-top: 12px;
+}
+.wifi-quote {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+@media (max-width: 720px) {
+  .wifi-layout {
+    grid-template-columns: 1fr;
+  }
+}

@@ -81,3 +81,5 @@ mod tests {
         assert!(price(vec![item(1, 10); MAX_LINES + 1]).is_err());
     }
 }
+
+pub mod wifi;

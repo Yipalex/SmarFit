@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import WifiPlanner, { type WifiPlan } from "./WifiPlanner.vue";
 
 type Category = "equipment" | "service";
 type Line = {
@@ -32,6 +33,7 @@ type State = {
   revision: number;
   questionnaire_key: string | null;
   inbox: Inquiry[];
+  wifi: Record<number, WifiPlan>;
 };
 type EditableLine = {
   key: number;
@@ -43,6 +45,8 @@ type EditableLine = {
 
 const workspace = ref<Workspace>({ projects: [], catalog: [] });
 const revision = ref(0);
+const wifiPlans = ref<Record<number, WifiPlan>>({});
+const wifiOpen = ref(false);
 const tab = ref<"projects" | "catalog" | "inbox">("projects");
 const tabLabels = {
   projects: "项目与报价",
@@ -97,6 +101,13 @@ const currency = new Intl.NumberFormat("zh-CN", {
   currency: "CNY",
 });
 const money = (cents: number) => currency.format(cents / 100);
+const wifiCatalog = computed(() =>
+  workspace.value.catalog.flatMap((item, index) =>
+    item.category === "equipment"
+      ? [{ name: item.name, index, price: money(item.unit_cents) }]
+      : [],
+  ),
+);
 const categoryLabel = (category: Category) =>
   category === "equipment" ? "设备费" : "服务费";
 const subtotal = (category: Category) =>
@@ -132,6 +143,7 @@ function apply(state: State) {
   workspace.value = state.workspace;
   questionnaireKey.value = state.questionnaire_key;
   inbox.value = state.inbox ?? [];
+  wifiPlans.value = state.wifi ?? {};
 }
 
 function editable(line: Line): EditableLine {
@@ -289,6 +301,24 @@ async function mutate(action: Record<string, unknown>, done: () => void) {
   } finally {
     busy.value = false;
   }
+}
+
+function saveWifi(plan: WifiPlan) {
+  void mutate({ action: "save_wifi", project: selected.value, plan }, () => {
+    message.value = "Wi-Fi 规划已保存";
+  });
+}
+
+function addWifiQuote(index: number, quantity: number) {
+  const item = workspace.value.catalog[index];
+  if (!item || lines.value.length >= 100) {
+    error.value = "报价最多 100 项，请先移除一项。";
+    return;
+  }
+  lines.value.push(editable({ ...item, quantity }));
+  historyVersion.value = null;
+  wifiOpen.value = false;
+  message.value = `已将 ${quantity} 个 AP 加入报价草稿`;
 }
 
 function openProject() {
@@ -511,6 +541,22 @@ async function printCustomer() {
                     发布版 {{ index + 1 }}
                   </option>
                 </select></label
+              >
+            </div>
+            <div class="wifi-project-entry">
+              <button
+                type="button"
+                :disabled="busy"
+                @click="
+                  error = '';
+                  wifiOpen = true;
+                "
+              >
+                Wi-Fi 规划
+              </button>
+              <span v-if="wifiPlans[selected]"
+                >{{ wifiPlans[selected].access_points.length }} 个 AP ·
+                {{ wifiPlans[selected].walls.length }} 段墙</span
               >
             </div>
             <div v-if="!snapshot" class="toolbar">
@@ -791,6 +837,16 @@ async function printCustomer() {
       </footer>
     </div>
 
+    <WifiPlanner
+      v-if="wifiOpen && project"
+      :saved="wifiPlans[selected]"
+      :catalog="wifiCatalog"
+      :busy="busy"
+      :error="error"
+      @save="saveWifi"
+      @quote="addWifiQuote"
+      @close="wifiOpen = false"
+    />
     <dialog ref="projectForm">
       <form @submit.prevent="createProject">
         <h2>新建项目</h2>

@@ -125,7 +125,7 @@ const claimed = await workspace({
 assert.equal(claimed.inbox.length, 0);
 assert.equal(claimed.workspace.projects[1].name, inquiry.name);
 assert.match(claimed.workspace.projects[1].requirements, /窗帘定时开启/);
-await workspace({
+const closed = await workspace({
   revision: claimed.revision,
   action: "set_questionnaire",
   key: null,
@@ -136,6 +136,45 @@ console.log(
   "Verified questionnaire submission, isolation, conversion and link closure.",
 );
 
+const wifi = {
+  width_cm: 2000,
+  height_cm: 1000,
+  access_points: [{ x: 150, y: 500 }],
+  walls: [
+    { from: { x: 500, y: 0 }, to: { x: 500, y: 1000 }, material: "concrete" },
+  ],
+};
+async function coverage(plan, status = 200) {
+  const response = await fetch(new URL("/api/wifi/coverage", base), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(plan),
+  });
+  assert.equal(response.status, status, await response.clone().text());
+  if (status === 200) return response.json();
+}
+const floor = await coverage(wifi);
+assert.equal(floor.levels.length, floor.size ** 2);
+assert(
+  floor.target_percent <
+    (await coverage({ ...wifi, walls: [] })).target_percent,
+);
+await coverage({ ...wifi, width_cm: 0 }, 422);
+await workspace({
+  revision: closed.revision,
+  action: "save_wifi",
+  project: 0,
+  plan: wifi,
+});
+assert.deepEqual((await workspace()).wifi, { 0: wifi });
+assert.deepEqual(
+  (await workspace(undefined, randomBytes(32).toString("hex"))).wifi,
+  {},
+);
+console.log(
+  "Verified Wi-Fi coverage, wall attenuation and project plan persistence.",
+);
+
 if (main) {
   const response = await fetch(new URL("/api/workspace", main), {
     headers: { Authorization: `Bearer ${key}` },
@@ -144,6 +183,7 @@ if (main) {
   const mainWorkspace = await response.json();
   assert.equal(mainWorkspace.revision, 0);
   assert.deepEqual(mainWorkspace.workspace.projects, []);
+  assert.deepEqual(mainWorkspace.wifi ?? {}, {});
   console.log("Verified preview writes are absent from main D1.");
 }
 
